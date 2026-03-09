@@ -50,7 +50,6 @@ export class FeedDao {
             ],
         );
         const insertedId = (result as any).insertId;
-        // insertedId is 0 when the row was skipped due to duplicate guid
         if (insertedId === 0) {
             return;
         }
