@@ -3,24 +3,23 @@ import { Feed } from "../models/types";
 import { RssService } from "./rss-service";
 
 function extractImage(item: any): string {
-    // enclosure (standard RSS)
     if (item.enclosure?.url) return item.enclosure.url;
-    // media:thumbnail — may be a single object or an array
     const thumb = item.mediaThumbnail;
+
     if (thumb) {
         const t = Array.isArray(thumb) ? thumb[0] : thumb;
         if (t?.$?.url) return t.$.url;
         if (typeof t === "string") return t;
     }
-    // media:content — may be a single object or an array
     const media = item.mediaContent;
+
     if (media) {
         const m = Array.isArray(media) ? media[0] : media;
         if (m?.$?.url) return m.$.url;
     }
-    // itunes image
+
     if (item.itunes?.image) return item.itunes.image;
-    // Fallback: first <img src="..."> in HTML content/description (e.g. Xataka-style feeds)
+
     const html = (item.content ||
         item["content:encoded"] ||
         item.description ||
@@ -33,7 +32,6 @@ function extractImage(item: any): string {
 }
 
 function extractCategories(item: any): string[] {
-    // Standard RSS <category> tags
     if (Array.isArray(item.categories) && item.categories.length > 0) {
         return item.categories
             .map((cat: any) => {
@@ -45,15 +43,13 @@ function extractCategories(item: any): string[] {
             })
             .filter((cat: any) => cat !== null) as string[];
     }
-    // Fallback: extract categories from URL path segments, excluding the last (article slug)
-    // e.g. xataka.com.mx/cine-y-tv/article-slug → ["cine-y-tv"]
-    // e.g. example.com/tech/mobile/article-slug  → ["tech", "mobile"]
+
     const link = String(item.link || item.guid || "");
     if (link) {
         try {
             const pathname = new URL(link).pathname;
             const segments = pathname.split("/").filter(Boolean);
-            const categories = segments.slice(0, -1); // all except last (slug)
+            const categories = segments.slice(0, -1); 
             if (categories.length > 0) return categories;
         } catch {}
     }
