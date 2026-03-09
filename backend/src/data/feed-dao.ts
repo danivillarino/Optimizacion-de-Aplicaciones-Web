@@ -38,7 +38,7 @@ export class FeedDao {
 
     async save(feed: Feed): Promise<void> {
         const [result] = await pool.query(
-            "INSERT INTO feed (guid, title, url, image, description, content, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT IGNORE INTO feed (guid, title, url, image, description, content, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 feed.guid,
                 feed.title,
@@ -52,12 +52,13 @@ export class FeedDao {
         
         const insertId = (result as any).insertId;
         
-        // Guardar categorías usando el ID generado por MySQL
-        for (const category of feed.categories) {
-            await pool.query(
-                "INSERT INTO feed_categories (feed_id, category) VALUES (?, ?)",
-                [insertId, category],
-            );
+        if (insertId > 0) {
+            for (const category of feed.categories) {
+                await pool.query(
+                    "INSERT IGNORE INTO feed_categories (feed_id, category) VALUES (?, ?)",
+                    [insertId, category],
+                );
+            }
         }
     }
 

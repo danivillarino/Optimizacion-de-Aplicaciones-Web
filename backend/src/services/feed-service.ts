@@ -23,34 +23,49 @@ export class FeedService {
                 const rss = await this.rssService.fetchFeed(url);
 
                 for (const item of rss.items) {
-                    const feed: Feed = {
-                        id: 0,
-                        guid: String(item.guid || item.link || ""),
-                        title: String(item.title || ""),
-                        url: String(item.link || ""),
-                        image: String((item as any).enclosure?.url || (item as any)["media:thumbnail"]?.$ || ""),
-                        description: String(item.contentSnippet || ""),
-                        content: String(item.content || ""),
-                        date: new Date(item.pubDate || Date.now()),
-                        categories: Array.isArray(item.categories) 
-                            ? item.categories
-                                .map(cat => {
-                                    if (typeof cat === 'string') return cat;
-                                    if (cat && typeof cat === 'object') {
-                                        return (cat as any)._ || (cat as any).text || null;
-                                    }
-                                    return null;
-                                })
-                                .filter(cat => cat !== null) as string[]
-                            : []
-                    };
+                    try {
+                        let imageUrl = "";
+                        if (item.content) {
+                            const imgMatch = item.content.match(/<img[^>]+src="([^">]+)"/);
+                            if (imgMatch && imgMatch[1]) {
+                                imageUrl = imgMatch[1];
+                            }
+                        }
+                        
+                        const feed: Feed = {
+                            id: 0,
+                            guid: String(item.guid || item.link || ""),
+                            title: String(item.title || ""),
+                            url: String(item.link || ""),
+                            image: imageUrl,
+                            description: String(item.contentSnippet || ""),
+                            content: String(item.content || ""),
+                            date: new Date(item.pubDate || Date.now()),
+                            categories: Array.isArray(item.categories) 
+                                ? item.categories
+                                    .map(cat => {
+                                        if (typeof cat === 'string') return cat;
+                                        if (cat && typeof cat === 'object') {
+                                            return (cat as any)._ || (cat as any).text || null;
+                                        }
+                                        return null;
+                                    })
+                                    .filter(cat => cat !== null) as string[]
+                                : []
+                        };
 
-                    await this.repository.save(feed);
+                        await this.repository.save(feed);
+                    } catch (itemError) {
+                        if (itemError instanceof Error && !itemError.message.includes('Duplicate entry')) {
+                            console.error(`Error procesando artículo del feed ${url}:`, itemError.message);
+                        }
+                    }
                 }
                 
                 successCount++;
                 
             } catch (error) {
+                console.error(`Error procesando feed ${url}:`, error instanceof Error ? error.message : 'Error desconocido');
                 errorCount++;
             }
         }
