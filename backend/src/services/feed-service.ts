@@ -1,10 +1,8 @@
 import { FeedRepository } from "../models/feed-repository";
 import { Feed } from "../models/types";
 import { RssService } from "./rss-service";
-import { FeedUpdateResult } from "./types";
 
 export class FeedService {
-
     private rssService = new RssService();
     private savedFeedUrls: string[] = [];
 
@@ -16,21 +14,15 @@ export class FeedService {
         }
     }
 
-    async updateFeeds(): Promise<FeedUpdateResult> {
-        const result: FeedUpdateResult = {
-            success: [],
-            errors: [],
-            totalArticles: 0
-        };
+    async updateFeeds(): Promise<void> {
+        let successCount = 0;
+        let errorCount = 0;
 
         for (const url of this.savedFeedUrls) {
-            
             try {
                 const rss = await this.rssService.fetchFeed(url);
-                let articlesProcessed = 0;
 
                 for (const item of rss.items) {
-
                     const feed: Feed = {
                         id: 0,
                         guid: String(item.guid || item.link || ""),
@@ -54,20 +46,18 @@ export class FeedService {
                     };
 
                     await this.repository.save(feed);
-                    articlesProcessed++;
                 }
                 
-                result.success.push({ url, articlesCount: articlesProcessed });
-                result.totalArticles += articlesProcessed;
+                successCount++;
                 
             } catch (error) {
-                const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
-                result.errors.push({ url, error: errorMessage });
+                errorCount++;
             }
-
         }
 
-        return result;
+        if (errorCount > 0 && successCount === 0) {
+            throw new Error('Todos los feeds fallaron');
+        }
     }
 
 }

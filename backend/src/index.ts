@@ -47,14 +47,8 @@ app.post("/api/feeds", async (req: Request, res: Response) => {
 
 app.post("/api/articles/update", async (req: Request, res: Response) => {
     try {
-        const result = await feedService.updateFeeds();
-        
-        if (result.errors.length > 0 && result.success.length === 0) {
-            return res.sendStatus(500);
-        }
-        
+        await feedService.updateFeeds();
         res.sendStatus(200);
-
     } catch (error) {
         res.sendStatus(500);
 
