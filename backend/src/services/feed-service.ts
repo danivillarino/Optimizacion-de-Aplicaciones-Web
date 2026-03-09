@@ -2,6 +2,64 @@ import { FeedRepository } from "../models/feed-repository";
 import { Feed } from "../models/types";
 import { RssService } from "./rss-service";
 
+function extractImage(item: any): string {
+    // enclosure (standard RSS)
+    if (item.enclosure?.url) return item.enclosure.url;
+    // media:thumbnail — may be a single object or an array
+    const thumb = item.mediaThumbnail;
+    if (thumb) {
+        const t = Array.isArray(thumb) ? thumb[0] : thumb;
+        if (t?.$?.url) return t.$.url;
+        if (typeof t === "string") return t;
+    }
+    // media:content — may be a single object or an array
+    const media = item.mediaContent;
+    if (media) {
+        const m = Array.isArray(media) ? media[0] : media;
+        if (m?.$?.url) return m.$.url;
+    }
+    // itunes image
+    if (item.itunes?.image) return item.itunes.image;
+    // Fallback: first <img src="..."> in HTML content/description (e.g. Xataka-style feeds)
+    const html = (item.content ||
+        item["content:encoded"] ||
+        item.description ||
+        "") as string;
+    if (html) {
+        const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
+        if (imgMatch?.[1]) return imgMatch[1];
+    }
+    return "";
+}
+
+function extractCategories(item: any): string[] {
+    // Standard RSS <category> tags
+    if (Array.isArray(item.categories) && item.categories.length > 0) {
+        return item.categories
+            .map((cat: any) => {
+                if (typeof cat === "string") return cat;
+                if (cat && typeof cat === "object") {
+                    return (cat as any)._ || (cat as any).text || null;
+                }
+                return null;
+            })
+            .filter((cat: any) => cat !== null) as string[];
+    }
+    // Fallback: extract categories from URL path segments, excluding the last (article slug)
+    // e.g. xataka.com.mx/cine-y-tv/article-slug → ["cine-y-tv"]
+    // e.g. example.com/tech/mobile/article-slug  → ["tech", "mobile"]
+    const link = String(item.link || item.guid || "");
+    if (link) {
+        try {
+            const pathname = new URL(link).pathname;
+            const segments = pathname.split("/").filter(Boolean);
+            const categories = segments.slice(0, -1); // all except last (slug)
+            if (categories.length > 0) return categories;
+        } catch {}
+    }
+    return [];
+}
+
 export class FeedService {
     private rssService = new RssService();
     private savedFeedUrls: string[] = [];
@@ -28,36 +86,25 @@ export class FeedService {
                         guid: String(item.guid || item.link || ""),
                         title: String(item.title || ""),
                         url: String(item.link || ""),
-                        image: String((item as any).enclosure?.url || (item as any)["media:thumbnail"]?.$ || ""),
+                        image: String(extractImage(item as any) || ""),
                         description: String(item.contentSnippet || ""),
                         content: String(item.content || ""),
                         date: new Date(item.pubDate || Date.now()),
-                        categories: Array.isArray(item.categories) 
-                            ? item.categories
-                                .map(cat => {
-                                    if (typeof cat === 'string') return cat;
-                                    if (cat && typeof cat === 'object') {
-                                        return (cat as any)._ || (cat as any).text || null;
-                                    }
-                                    return null;
-                                })
-                                .filter(cat => cat !== null) as string[]
-                            : []
+                        categories: extractCategories(item as any),
                     };
 
                     await this.repository.save(feed);
                 }
-                
+
                 successCount++;
-                
             } catch (error) {
+                console.error(`Error procesando feed ${url}:`, error);
                 errorCount++;
             }
         }
 
         if (errorCount > 0 && successCount === 0) {
-            throw new Error('Todos los feeds fallaron');
+            throw new Error("Todos los feeds fallaron");
         }
     }
-
 }

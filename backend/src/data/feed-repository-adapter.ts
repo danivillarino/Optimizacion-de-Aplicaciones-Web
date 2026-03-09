@@ -10,9 +10,8 @@ export class FeedRepositoryAdapter implements FeedRepository {
         return this.feedDao.getById(id);
     }
 
-    save(feed: Feed): Promise<void> {
-        this.feedDao.save(feed);
-        return Promise.resolve();
+    async save(feed: Feed): Promise<void> {
+        await this.feedDao.save(feed);
     }
 
     list(request: PageRequest): Promise<PageResponse<Feed>> {

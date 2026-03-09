@@ -27,8 +27,8 @@ export class FeedDao {
             id: (feedRows as any[])[0].id,
             guid: (feedRows as any[])[0].guid,
             title: (feedRows as any[])[0].title,
+            image: (feedRows as any[])[0].image,
             url: (feedRows as any[])[0].url,
-            image: (feedRows as any[])[0].image || "",
             description: (feedRows as any[])[0].description,
             content: (feedRows as any[])[0].content,
             date: new Date((feedRows as any[])[0].date),
@@ -38,25 +38,26 @@ export class FeedDao {
 
     async save(feed: Feed): Promise<void> {
         const [result] = await pool.query(
-            "INSERT INTO feed (guid, title, url, image, description, content, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT IGNORE INTO feed (guid, title, url, description, content, date, image) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 feed.guid,
                 feed.title,
                 feed.url,
-                feed.image,
                 feed.description,
                 feed.content,
                 feed.date,
+                feed.image,
             ],
         );
-        
-        const insertId = (result as any).insertId;
-        
-        // Guardar categorías usando el ID generado por MySQL
+        const insertedId = (result as any).insertId;
+        // insertedId is 0 when the row was skipped due to duplicate guid
+        if (insertedId === 0) {
+            return;
+        }
         for (const category of feed.categories) {
             await pool.query(
-                "INSERT INTO feed_categories (feed_id, category) VALUES (?, ?)",
-                [insertId, category],
+                "INSERT IGNORE INTO feed_categories (feed_id, category) VALUES (?, ?)",
+                [insertedId, category],
             );
         }
     }
@@ -78,20 +79,23 @@ export class FeedDao {
         const totalPages = Math.ceil(
             totalItems / (request.size || DEFAULT_PAGE_SIZE),
         );
-        const [categoryRows] = await pool.query(
-            "SELECT feed_id, category FROM feed_categories WHERE feed_id IN (?)",
-            [(feedRows as any[]).map((row) => row.id)],
-        );
+        const feedIds = (feedRows as any[]).map((row) => row.id);
+        const categoryRows: any[] = feedIds.length > 0
+            ? (await pool.query(
+                  "SELECT feed_id, category FROM feed_categories WHERE feed_id IN (?)",
+                  [feedIds],
+              ))[0] as any[]
+            : [];
         const feeds: Feed[] = (feedRows as any[]).map((row) => ({
             id: row.id,
             guid: row.guid,
             title: row.title,
             url: row.url,
-            image: row.image || "",
             description: row.description,
+            image: row.image,
             content: row.content,
             date: new Date(row.date),
-            categories: (categoryRows as any[])
+            categories: categoryRows
                 .filter((cat) => cat.feed_id === row.id)
                 .map((cat) => cat.category),
         }));
@@ -118,30 +122,17 @@ export class FeedDao {
             `SELECT * FROM feed WHERE ${whereClauses}`,
             allowedFields.map(() => `%${query}%`),
         );
-        
-        // Obtener categorías para todos los feeds encontrados
-        const feedIds = (feedRows as any[]).map((row) => row.id);
-        let categoryRows: any[] = [];
-        if (feedIds.length > 0) {
-            const [rows] = await pool.query(
-                "SELECT feed_id, category FROM feed_categories WHERE feed_id IN (?)",
-                [feedIds],
-            );
-            categoryRows = rows as any[];
-        }
-        
+        console.log("FeedDao.search - feedRows:", feedRows);
         return (feedRows as any[]).map((row) => ({
             id: row.id,
             guid: row.guid,
             title: row.title,
             url: row.url,
-            image: row.image || "",
             description: row.description,
             content: row.content,
             date: new Date(row.date),
-            categories: categoryRows
-                .filter((cat) => cat.feed_id === row.id)
-                .map((cat) => cat.category),
+            image: row.image,
+            categories: [],
         }));
     }
 
