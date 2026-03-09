@@ -28,6 +28,7 @@ export class FeedDao {
             guid: (feedRows as any[])[0].guid,
             title: (feedRows as any[])[0].title,
             url: (feedRows as any[])[0].url,
+            image: (feedRows as any[])[0].image || "",
             description: (feedRows as any[])[0].description,
             content: (feedRows as any[])[0].content,
             date: new Date((feedRows as any[])[0].date),
@@ -36,24 +37,28 @@ export class FeedDao {
     }
 
     async save(feed: Feed): Promise<void> {
-        await pool.query(
-            "INSERT INTO feed (id, guid, title, url, description, content, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        const [result] = await pool.query(
+            "INSERT INTO feed (guid, title, url, image, description, content, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
-                feed.id,
                 feed.guid,
                 feed.title,
                 feed.url,
+                feed.image,
                 feed.description,
                 feed.content,
                 feed.date,
             ],
         );
-        feed.categories.forEach(async (category) => {
+        
+        const insertId = (result as any).insertId;
+        
+        // Guardar categorías usando el ID generado por MySQL
+        for (const category of feed.categories) {
             await pool.query(
                 "INSERT INTO feed_categories (feed_id, category) VALUES (?, ?)",
-                [feed.id, category],
+                [insertId, category],
             );
-        });
+        }
     }
 
     async list(request: PageRequest): Promise<PageResponse<Feed>> {
@@ -82,6 +87,7 @@ export class FeedDao {
             guid: row.guid,
             title: row.title,
             url: row.url,
+            image: row.image || "",
             description: row.description,
             content: row.content,
             date: new Date(row.date),
@@ -112,16 +118,30 @@ export class FeedDao {
             `SELECT * FROM feed WHERE ${whereClauses}`,
             allowedFields.map(() => `%${query}%`),
         );
-        console.log("FeedDao.search - feedRows:", feedRows);
+        
+        // Obtener categorías para todos los feeds encontrados
+        const feedIds = (feedRows as any[]).map((row) => row.id);
+        let categoryRows: any[] = [];
+        if (feedIds.length > 0) {
+            const [rows] = await pool.query(
+                "SELECT feed_id, category FROM feed_categories WHERE feed_id IN (?)",
+                [feedIds],
+            );
+            categoryRows = rows as any[];
+        }
+        
         return (feedRows as any[]).map((row) => ({
             id: row.id,
             guid: row.guid,
             title: row.title,
             url: row.url,
+            image: row.image || "",
             description: row.description,
             content: row.content,
             date: new Date(row.date),
-            categories: [],
+            categories: categoryRows
+                .filter((cat) => cat.feed_id === row.id)
+                .map((cat) => cat.category),
         }));
     }
 

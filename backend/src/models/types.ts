@@ -3,6 +3,7 @@ export interface Feed {
     guid: string;
     title: string;
     url: string;
+    image: string;
     description: string;
     content: string;
     date: Date;
