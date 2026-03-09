@@ -1,5 +1,6 @@
 export interface Feed {
     id: number;
+    guid: string;
     title: string;
     url: string;
     description: string;
