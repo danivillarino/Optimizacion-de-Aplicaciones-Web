@@ -1,4 +1,4 @@
-import { FeedDao } from "../data/Feed-dao";
+import { FeedDao } from "../data/feed-dao";
 export const testService = {
     testFunction: ({ query, fields }: { query: string; fields: string[] }) => {
         console.log(

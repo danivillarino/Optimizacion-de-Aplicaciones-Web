@@ -13,10 +13,9 @@ const DEFAULT_PAGE_SIZE = 10;
 
 export class FeedDao {
     async getById(id: number): Promise<Feed | null> {
-        const [feedRows] = await pool.query(
-            "SELECT * FROM feeds WHERE id = ?",
-            [id],
-        );
+        const [feedRows] = await pool.query("SELECT * FROM feed WHERE id = ?", [
+            id,
+        ]);
         const [categoryRows] = await pool.query(
             "SELECT category FROM feed_categories WHERE feed_id = ?",
             [id],
@@ -38,7 +37,7 @@ export class FeedDao {
 
     async save(feed: Feed): Promise<void> {
         await pool.query(
-            "INSERT INTO feeds (id, guid, title, url, description, content, date, categories) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO feed (id, guid, title, url, description, content, date) VALUES (?, ?, ?, ?, ?, ?, ?)",
             [
                 feed.id,
                 feed.guid,
@@ -64,11 +63,11 @@ export class FeedDao {
             request.order,
         );
         const [feedRows] = await pool.query(
-            `SELECT * FROM feeds ${orderByQuery} LIMIT ? OFFSET ?`,
+            `SELECT * FROM feed ${orderByQuery} LIMIT ? OFFSET ?`,
             [request.size || DEFAULT_PAGE_SIZE, offset],
         );
         const [countRows] = await pool.query(
-            "SELECT COUNT(*) as count FROM feeds",
+            "SELECT COUNT(*) as count FROM feed",
         );
         const totalItems = (countRows as any[])[0].count;
         const totalPages = Math.ceil(
@@ -110,7 +109,7 @@ export class FeedDao {
             .map((field) => `${field} LIKE ?`)
             .join(" OR ");
         const [feedRows] = await pool.query(
-            `SELECT * FROM feeds WHERE ${whereClauses}`,
+            `SELECT * FROM feed WHERE ${whereClauses}`,
             allowedFields.map(() => `%${query}%`),
         );
         console.log("FeedDao.search - feedRows:", feedRows);

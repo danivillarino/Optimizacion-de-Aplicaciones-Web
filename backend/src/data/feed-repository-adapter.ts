@@ -1,6 +1,6 @@
 import { FeedRepository } from "../models/feed-repository";
 import { Feed } from "../models/types";
-import { FeedDao } from "./Feed-dao";
+import { FeedDao } from "./feed-dao";
 import { PageRequest, PageResponse } from "./types";
 
 export class FeedRepositoryAdapter implements FeedRepository {
