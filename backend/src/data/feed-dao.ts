@@ -80,12 +80,15 @@ export class FeedDao {
             totalItems / (request.size || DEFAULT_PAGE_SIZE),
         );
         const feedIds = (feedRows as any[]).map((row) => row.id);
-        const categoryRows: any[] = feedIds.length > 0
-            ? (await pool.query(
-                  "SELECT feed_id, category FROM feed_categories WHERE feed_id IN (?)",
-                  [feedIds],
-              ))[0] as any[]
-            : [];
+        const categoryRows: any[] =
+            feedIds.length > 0
+                ? ((
+                      await pool.query(
+                          "SELECT feed_id, category FROM feed_categories WHERE feed_id IN (?)",
+                          [feedIds],
+                      )
+                  )[0] as any[])
+                : [];
         const feeds: Feed[] = (feedRows as any[]).map((row) => ({
             id: row.id,
             guid: row.guid,
