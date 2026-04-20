@@ -18,7 +18,14 @@ export class FeedRepositoryAdapter implements FeedRepository {
         return this.feedDao.list(request);
     }
 
-    search(query: string, fields: string[]): Promise<Feed[]> {
-        return this.feedDao.search(query, fields);
+    async search(query: string, fields: string[]): Promise<Feed[]> {
+        const result = await this.feedDao.search(query, fields);
+        console.log(
+            "categories: ",
+            result
+                .filter((feed) => feed.categories && feed.categories.length > 0)
+                .map((feed) => feed.categories),
+        );
+        return result;
     }
 }
