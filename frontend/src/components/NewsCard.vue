@@ -1,20 +1,42 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import placeholderImage from '../assets/news-placeholder.svg'
 
 const props = defineProps({
   article: {
     type: Object,
     required: true,
   },
+  eagerImage: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 const hasImageError = ref(false)
+const hasImageLoaded = ref(false)
+const imageRef = ref(null)
+const shouldLoadImage = ref(false)
+let imageObserver = null
 
-const placeholderImage =
-  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 480'%3E%3Crect width='800' height='480' fill='%23192c3e'/%3E%3Ccircle cx='675' cy='98' r='88' fill='%23d8774a' fill-opacity='0.92'/%3E%3Crect x='72' y='118' width='300' height='30' rx='15' fill='%23fffaf2' fill-opacity='0.9'/%3E%3Crect x='72' y='176' width='470' height='24' rx='12' fill='%23fffaf2' fill-opacity='0.74'/%3E%3Crect x='72' y='218' width='420' height='24' rx='12' fill='%23fffaf2' fill-opacity='0.58'/%3E%3Crect x='72' y='300' width='170' height='48' rx='24' fill='%23d8774a'/%3E%3C/svg%3E"
+const imageLoading = computed(() => (props.eagerImage ? 'eager' : 'lazy'))
+const imageFetchPriority = computed(() => (props.eagerImage ? 'high' : 'low'))
 
 const resolvedImage = computed(() => {
-  return !hasImageError.value && props.article.image ? props.article.image : placeholderImage
+  if (!shouldLoadImage.value || hasImageError.value || !props.article.image) {
+    return placeholderImage
+  }
+
+  return props.article.image
+})
+
+const isRealImageVisible = computed(() => {
+  return (
+    shouldLoadImage.value &&
+    !hasImageError.value &&
+    hasImageLoaded.value &&
+    Boolean(props.article.image)
+  )
 })
 
 const formattedDate = computed(() => {
@@ -45,16 +67,71 @@ const formattedUrl = computed(() => {
     return props.article.url
   }
 })
+
+function initializeObserver() {
+  if (props.eagerImage || !props.article.image) {
+    shouldLoadImage.value = true
+    hasImageLoaded.value = false
+    return
+  }
+
+  if (typeof IntersectionObserver !== 'function') {
+    shouldLoadImage.value = true
+    hasImageLoaded.value = false
+    return
+  }
+
+  imageObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) {
+          return
+        }
+
+        shouldLoadImage.value = true
+        hasImageLoaded.value = false
+        imageObserver?.disconnect()
+        imageObserver = null
+      })
+    },
+    {
+      rootMargin: '300px 0px',
+      threshold: 0.01,
+    },
+  )
+
+  if (imageRef.value) {
+    imageObserver.observe(imageRef.value)
+  }
+}
+
+onMounted(() => {
+  initializeObserver()
+})
+
+onBeforeUnmount(() => {
+  imageObserver?.disconnect()
+})
 </script>
 
 <template>
   <article class="news-card card h-100 border-0">
-    <img
-      :src="resolvedImage"
-      class="card-img-top news-image"
-      :alt="article.title"
-      @error="hasImageError = true"
-    />
+    <div class="news-image-frame">
+      <img
+        ref="imageRef"
+        :src="resolvedImage"
+        class="card-img-top news-image"
+        :class="{ 'is-visible': isRealImageVisible }"
+        :alt="article.title"
+        width="800"
+        height="480"
+        :loading="imageLoading"
+        :fetchpriority="imageFetchPriority"
+        decoding="async"
+        @load="hasImageLoaded = true"
+        @error="hasImageError = true"
+      />
+    </div>
 
     <div class="card-body d-flex flex-column p-3">
       <div class="d-flex flex-wrap gap-2 mb-3">
@@ -113,9 +190,24 @@ const formattedUrl = computed(() => {
   box-shadow: 0 28px 80px rgba(25, 44, 62, 0.16);
 }
 
-.news-image {
+.news-image-frame {
+  position: relative;
   height: 155px;
+  overflow: hidden;
+  background: url('../assets/news-placeholder.svg') center center / cover no-repeat;
+}
+
+.news-image {
+  display: block;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+
+.news-image.is-visible {
+  opacity: 1;
 }
 
 .news-meta {
@@ -167,7 +259,7 @@ const formattedUrl = computed(() => {
     min-height: 380px;
   }
 
-  .news-image {
+  .news-image-frame {
     height: 140px;
   }
 }

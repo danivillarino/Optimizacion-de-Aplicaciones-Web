@@ -17,7 +17,7 @@ const feedDao = new FeedDao();
 const feedRepository = new FeedRepositoryAdapter(feedDao);
 const feedService = new FeedService(feedRepository);
 
-app.get("/", (req: Request, res: Response) => {
+app.get("/", (_: Request, res: Response) => {
     res.json({
         message: "Servidor RSS funcionando",
     });
@@ -37,6 +37,7 @@ app.post("/api/feeds", async (req: Request, res: Response) => {
             url,
         });
     } catch (error) {
+        console.error("Error agregando RSS:", error);
         res.status(500).json({
             error: "Error agregando RSS",
         });
@@ -78,6 +79,7 @@ app.get("/api/articles/search", async (req: Request, res: Response) => {
             data: result,
         });
     } catch (error) {
+        console.error("Error buscando noticias:", error);
         res.status(500).json({
             error: "Error buscando noticias",
         });
@@ -103,6 +105,7 @@ app.get("/api/articles/:id", async (req: Request, res: Response) => {
 
         res.json(article);
     } catch (error) {
+        console.error("Error obteniendo artículo:", error);
         res.status(500).json({
             error: "Error obteniendo artículo",
         });
@@ -127,6 +130,7 @@ app.get("/api/articles", async (req: Request, res: Response) => {
             data: result.items,
         });
     } catch (error) {
+        console.error("Error obteniendo noticias:", error);
         res.status(500).json({
             error: "Error obteniendo noticias",
         });

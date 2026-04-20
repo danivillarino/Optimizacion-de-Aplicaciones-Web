@@ -16,22 +16,28 @@ const EMPTY_STATE_MESSAGES = {
   default: 'Aún no hay noticias cargadas. Agrega uno o mas feeds RSS y actualiza para comenzar.',
   filtered: 'No hay noticias que coincidan con tu busqueda y filtros actuales.',
 }
+const SEARCH_FIELDS = 'title|date|description'
+const PAGE_SIZE = 12
 
-const allArticles = ref([])
-const searchedArticles = ref([])
-const visibleArticles = ref([])
+const baseArticles = ref([])
+const searchResults = ref([])
 const search = ref('')
 const sortField = ref('date')
 const sortOrder = ref('desc')
 const selectedCategory = ref('')
 const isLoading = ref(false)
+const isLoadingMore = ref(false)
 const isRefreshing = ref(false)
 const isAddingFeed = ref(false)
 const isSearching = ref(false)
+const hasMorePages = ref(false)
+const currentPage = ref(1)
 const statusMessage = ref('')
 const statusType = ref('info')
 const loadError = ref('')
 let searchTimeoutId = null
+let listAbortController = null
+let requestSequence = 0
 
 function normalizeCategories(categories) {
   if (!Array.isArray(categories)) {
@@ -95,98 +101,193 @@ function setStatus(message, type = 'info') {
   statusType.value = type
 }
 
-function applyCategoryFilter(articleList) {
-  if (!selectedCategory.value) {
-    return articleList
+function getNextPage(payload, requestedPage, receivedItems) {
+  const meta = payload?.meta || payload?.pagination
+  const totalPages = Number(meta?.totalPages || meta?.pages || 0)
+  const page = Number(meta?.page || requestedPage)
+
+  if (totalPages > 0) {
+    return {
+      page,
+      hasMore: page < totalPages,
+    }
   }
 
-  return articleList.filter((article) => article.categories.includes(selectedCategory.value))
+  return {
+    page: requestedPage,
+    hasMore: receivedItems === PAGE_SIZE,
+  }
 }
 
-function sortClientSide(articleList) {
-  const direction = sortOrder.value === 'asc' ? 1 : -1
-  const sorted = [...articleList]
+function dedupeById(list) {
+  const uniqueArticles = new Map()
 
-  sorted.sort((firstArticle, secondArticle) => {
-    if (sortField.value === 'date') {
-      const firstDate = new Date(firstArticle.date || 0).getTime()
-      const secondDate = new Date(secondArticle.date || 0).getTime()
-
-      return (firstDate - secondDate) * direction
-    }
-
-    const firstValue = String(firstArticle[sortField.value] || '')
-      .trim()
-      .toLowerCase()
-    const secondValue = String(secondArticle[sortField.value] || '')
-      .trim()
-      .toLowerCase()
-    const result = firstValue.localeCompare(secondValue, 'es', {
-      sensitivity: 'base',
-    })
-
-    if (result !== 0) {
-      return result * direction
-    }
-
-    return firstArticle.title.localeCompare(secondArticle.title, 'es', {
-      sensitivity: 'base',
-    })
+  list.forEach((article) => {
+    uniqueArticles.set(article.id, article)
   })
 
-  return sorted
+  return [...uniqueArticles.values()]
 }
 
-function syncVisibleArticles(sourceArticles = allArticles.value) {
-  visibleArticles.value = sortClientSide(applyCategoryFilter(sourceArticles))
+function getArticleSortValue(article, field) {
+  if (field === 'title') {
+    return article.title || ''
+  }
+
+  if (field === 'description') {
+    return article.description || ''
+  }
+
+  const dateValue = Date.parse(article.date || '')
+
+  return Number.isNaN(dateValue) ? 0 : dateValue
 }
 
-async function loadArticles() {
-  isLoading.value = true
-  loadError.value = ''
+function sortArticles(list) {
+  const direction = sortOrder.value === 'asc' ? 1 : -1
+
+  return [...list].sort((firstArticle, secondArticle) => {
+    const firstValue = getArticleSortValue(firstArticle, sortField.value)
+    const secondValue = getArticleSortValue(secondArticle, sortField.value)
+
+    if (typeof firstValue === 'number' && typeof secondValue === 'number') {
+      return (firstValue - secondValue) * direction
+    }
+
+    return (
+      String(firstValue).localeCompare(String(secondValue), 'es', {
+        sensitivity: 'base',
+      }) * direction
+    )
+  })
+}
+
+function filterByCategory(list) {
+  const category = selectedCategory.value.trim()
+
+  if (!category) {
+    return list
+  }
+
+  return list.filter((article) => article.categories.includes(category))
+}
+
+function getActiveArticles() {
+  const trimmedSearch = search.value.trim()
+
+  return trimmedSearch ? searchResults.value : baseArticles.value
+}
+
+function getVisibleArticles() {
+  return sortArticles(filterByCategory(getActiveArticles()))
+}
+
+async function loadBaseArticles({ reset = false } = {}) {
+  if (listAbortController) {
+    listAbortController.abort()
+  }
+
+  const controller = new AbortController()
+  listAbortController = controller
+  const requestedPage = reset ? 1 : currentPage.value + 1
+
+  if (reset) {
+    isLoading.value = true
+    loadError.value = ''
+  } else {
+    isLoadingMore.value = true
+  }
 
   try {
     const result = await getArticles({
       order: sortOrder.value,
       by: sortField.value,
+      page: requestedPage,
+      size: PAGE_SIZE,
+      signal: controller.signal,
     })
 
-    allArticles.value = Array.isArray(result?.data) ? result.data.map(normalizeArticle) : []
+    const nextArticles = Array.isArray(result?.data) ? result.data.map(normalizeArticle) : []
 
-    if (!search.value.trim()) {
-      syncVisibleArticles(allArticles.value)
+    if (reset) {
+      baseArticles.value = nextArticles
+    } else {
+      baseArticles.value = dedupeById([...baseArticles.value, ...nextArticles])
     }
 
-    if (!allArticles.value.length) {
-      setStatus('No se encontraron noticias almacenadas todavia.')
+    const paginationState = getNextPage(result, requestedPage, nextArticles.length)
+    currentPage.value = paginationState.page
+    hasMorePages.value = paginationState.hasMore
+
+    if (!getVisibleArticles().length) {
+      setStatus('No se encontraron noticias con los filtros actuales.')
     }
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      return
+    }
+
     console.error('Error cargando articulos:', error)
     loadError.value = 'No fue posible cargar las noticias desde la API.'
     setStatus(loadError.value, 'danger')
   } finally {
+    if (listAbortController === controller) {
+      listAbortController = null
+    }
     isLoading.value = false
+    isLoadingMore.value = false
   }
 }
 
 async function loadSearchResults() {
+  const trimmedSearch = search.value.trim()
+
+  if (!trimmedSearch) {
+    searchResults.value = []
+    hasMorePages.value = true
+    await loadBaseArticles({ reset: true })
+    return
+  }
+
+  if (listAbortController) {
+    listAbortController.abort()
+  }
+
+  const controller = new AbortController()
+  listAbortController = controller
+  const sequence = ++requestSequence
+
   isSearching.value = true
   loadError.value = ''
 
   try {
-    const result = await searchArticles(search.value.trim(), 'title|date|description')
-    searchedArticles.value = Array.isArray(result?.data) ? result.data.map(normalizeArticle) : []
+    const result = await searchArticles(trimmedSearch, SEARCH_FIELDS, {
+      signal: controller.signal,
+    })
 
-    visibleArticles.value = sortClientSide(applyCategoryFilter(searchedArticles.value))
+    if (sequence !== requestSequence) {
+      return
+    }
 
-    if (!searchedArticles.value.length) {
-      setStatus('La busqueda no devolvio resultados.', 'info')
+    searchResults.value = Array.isArray(result?.data) ? result.data.map(normalizeArticle) : []
+    currentPage.value = 1
+    hasMorePages.value = false
+
+    if (!getVisibleArticles().length) {
+      setStatus('No se encontraron noticias con los filtros actuales.')
     }
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      return
+    }
+
     console.error('Error buscando articulos:', error)
-    loadError.value = 'No fue posible buscar noticias en este momento.'
+    loadError.value = 'No fue posible buscar las noticias en este momento.'
     setStatus(loadError.value, 'danger')
   } finally {
+    if (listAbortController === controller) {
+      listAbortController = null
+    }
     isSearching.value = false
   }
 }
@@ -196,13 +297,15 @@ async function searchNow() {
     clearTimeout(searchTimeoutId)
   }
 
-  if (!search.value.trim()) {
-    searchedArticles.value = []
-    syncVisibleArticles(allArticles.value)
+  await loadSearchResults()
+}
+
+async function loadMoreArticles() {
+  if (search.value.trim() || !hasMorePages.value || isLoading.value || isLoadingMore.value) {
     return
   }
 
-  await loadSearchResults()
+  await loadBaseArticles()
 }
 
 async function refreshFeed() {
@@ -211,10 +314,11 @@ async function refreshFeed() {
 
   try {
     await updateArticles()
+
     if (search.value.trim()) {
-      await Promise.all([loadArticles(), loadSearchResults()])
+      await loadSearchResults()
     } else {
-      await loadArticles()
+      await loadBaseArticles({ reset: true })
     }
 
     setStatus('Noticias actualizadas correctamente.', 'success')
@@ -244,7 +348,7 @@ async function addFeedHandler(url) {
 const categories = computed(() => {
   const uniqueCategories = new Set()
 
-  allArticles.value.forEach((article) => {
+  dedupeById([...baseArticles.value, ...searchResults.value]).forEach((article) => {
     article.categories.forEach((category) => uniqueCategories.add(category))
   })
 
@@ -259,40 +363,26 @@ const hasActiveFilters = computed(() => {
   return Boolean(search.value.trim() || selectedCategory.value)
 })
 
+const visibleArticles = computed(() => getVisibleArticles())
+
 const emptyMessage = computed(() => {
   return hasActiveFilters.value ? EMPTY_STATE_MESSAGES.filtered : EMPTY_STATE_MESSAGES.default
 })
 
-watch(selectedCategory, () => {
-  if (search.value.trim()) {
-    syncVisibleArticles(searchedArticles.value)
-    return
-  }
-
-  syncVisibleArticles(allArticles.value)
-})
-
-watch([sortField, sortOrder], async () => {
-  if (search.value.trim()) {
-    syncVisibleArticles(searchedArticles.value)
-    return
-  }
-
-  await loadArticles()
-})
-
-watch(search, (value) => {
+watch(search, () => {
   if (searchTimeoutId) {
     clearTimeout(searchTimeoutId)
   }
 
-  searchTimeoutId = setTimeout(async () => {
-    if (!value.trim()) {
-      searchedArticles.value = []
-      syncVisibleArticles(allArticles.value)
-      return
-    }
+  const trimmedSearch = search.value.trim()
 
+  if (!trimmedSearch) {
+    searchResults.value = []
+    loadBaseArticles({ reset: true })
+    return
+  }
+
+  searchTimeoutId = setTimeout(async () => {
     await loadSearchResults()
   }, 300)
 })
@@ -301,10 +391,14 @@ onBeforeUnmount(() => {
   if (searchTimeoutId) {
     clearTimeout(searchTimeoutId)
   }
+
+  if (listAbortController) {
+    listAbortController.abort()
+  }
 })
 
 onMounted(() => {
-  loadArticles()
+  loadBaseArticles({ reset: true })
 })
 </script>
 
@@ -347,7 +441,10 @@ onMounted(() => {
       <NewsList
         :news="visibleArticles"
         :loading="isLoading || isSearching"
+        :loading-more="isLoadingMore"
+        :can-load-more="hasMorePages"
         :empty-message="emptyMessage"
+        @load-more="loadMoreArticles"
       />
     </div>
   </section>

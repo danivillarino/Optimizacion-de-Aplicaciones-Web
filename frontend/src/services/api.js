@@ -1,4 +1,4 @@
-const API_BASE = 'https://regretably-scepterless-chu.ngrok-free.dev/api'
+const API_BASE = 'http://localhost:3000/api'
 
 const DEFAULT_HEADERS = {
   Accept: 'application/json',
@@ -27,7 +27,7 @@ function getErrorMessage(payload, fallbackMessage) {
   return payload?.message || payload?.error || fallbackMessage
 }
 
-async function request(path, { method = 'GET', body } = {}) {
+async function request(path, { method = 'GET', body, signal } = {}) {
   const hasBody = body !== undefined
   const headers = {
     ...DEFAULT_HEADERS,
@@ -37,11 +37,17 @@ async function request(path, { method = 'GET', body } = {}) {
     headers['Content-Type'] = 'application/json'
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const requestOptions = {
     method,
     headers,
-    body: hasBody ? JSON.stringify(body) : undefined,
-  })
+    signal,
+  }
+
+  if (hasBody) {
+    requestOptions.body = JSON.stringify(body)
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, requestOptions)
 
   const payload = await parseResponseBody(response)
 
@@ -105,15 +111,38 @@ export async function getArticleById(id) {
 /**
  * 4. Listar artículos
  */
-export async function getArticles({ order = 'desc', by = 'date', page = 1, size = 100 } = {}) {
-  const params = new URLSearchParams({
-    order,
-    by,
-    page,
-    size,
-  })
+export async function getArticles({
+  order = 'desc',
+  by = 'date',
+  page = 1,
+  size = 20,
+  query = '',
+  fields = '',
+  category = '',
+  signal,
+} = {}) {
+  const params = new URLSearchParams()
 
-  const payload = await request(`/articles?${params}`)
+  params.set('order', order)
+  params.set('by', by)
+  params.set('page', String(page))
+  params.set('size', String(size))
+
+  if (typeof query === 'string' && query.trim()) {
+    params.set('query', query.trim())
+  }
+
+  if (typeof fields === 'string' && fields.trim()) {
+    params.set('fields', fields.trim())
+  }
+
+  if (typeof category === 'string' && category.trim()) {
+    params.set('category', category.trim())
+  }
+
+  const payload = await request(`/articles?${params}`, {
+    signal,
+  })
 
   return normalizeCollectionResponse(payload)
 }
@@ -121,13 +150,15 @@ export async function getArticles({ order = 'desc', by = 'date', page = 1, size 
 /**
  * 5. Buscar artículos
  */
-export async function searchArticles(query, fields = 'title|content|description') {
+export async function searchArticles(query, fields = 'title|content|description', options = {}) {
   const params = new URLSearchParams({
     query,
     fields,
   })
 
-  const payload = await request(`/articles/search?${params}`)
+  const payload = await request(`/articles/search?${params}`, {
+    signal: options.signal,
+  })
 
   return normalizeCollectionResponse(payload)
 }

@@ -125,6 +125,15 @@ export class FeedDao {
             allowedFields.map(() => `%${query}%`),
         );
         console.log("FeedDao.search - feedRows:", feedRows);
+        const categoryRows: any[] =
+            (feedRows as any[]).length > 0
+                ? ((
+                      await pool.query(
+                          "SELECT feed_id, category FROM feed_categories WHERE feed_id IN (?)",
+                          [(feedRows as any[]).map((row) => row.id)],
+                      )
+                  )[0] as any[])
+                : [];
         return (feedRows as any[]).map((row) => ({
             id: row.id,
             guid: row.guid,
@@ -134,7 +143,9 @@ export class FeedDao {
             content: row.content,
             date: new Date(row.date),
             image: row.image,
-            categories: [],
+            categories: categoryRows
+                .filter((cat) => cat.feed_id === row.id)
+                .map((cat) => cat.category),
         }));
     }
 
