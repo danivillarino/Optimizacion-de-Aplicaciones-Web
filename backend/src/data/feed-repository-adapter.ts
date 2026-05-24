@@ -14,8 +14,15 @@ export class FeedRepositoryAdapter implements FeedRepository {
         await this.feedDao.save(feed);
     }
 
-    list(request: PageRequest): Promise<PageResponse<Feed>> {
-        return this.feedDao.list(request);
+    async saveMany(feeds: Feed[]): Promise<void> {
+        await this.feedDao.saveMany(feeds);
+    }
+
+    list(
+        request: PageRequest,
+        filters: Record<string, any>,
+    ): Promise<PageResponse<Feed>> {
+        return this.feedDao.list(request, filters);
     }
 
     async search(query: string, fields: string[]): Promise<Feed[]> {
@@ -27,5 +34,9 @@ export class FeedRepositoryAdapter implements FeedRepository {
                 .map((feed) => feed.categories),
         );
         return result;
+    }
+
+    listCategories(): Promise<string[]> {
+        return this.feedDao.listCategories();
     }
 }

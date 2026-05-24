@@ -1,106 +1,85 @@
 import { FeedRepository } from "../models/feed-repository";
+import { UrlRepository } from "../models/url-repository";
 import { Feed } from "../models/types";
 import { RssService } from "./rss-service";
+import { clearFeedCache } from "./feed-middlewares";
 
-function extractImage(item: any): string {
-    if (item.enclosure?.url) return item.enclosure.url;
-    const thumb = item.mediaThumbnail;
-
-    if (thumb) {
-        const t = Array.isArray(thumb) ? thumb[0] : thumb;
-        if (t?.$?.url) return t.$.url;
-        if (typeof t === "string") return t;
-    }
-    const media = item.mediaContent;
-
-    if (media) {
-        const m = Array.isArray(media) ? media[0] : media;
-        if (m?.$?.url) return m.$.url;
-    }
-
-    if (item.itunes?.image) return item.itunes.image;
-
-    const html = (item.content ||
-        item["content:encoded"] ||
-        item.description ||
-        "") as string;
-    if (html) {
-        const imgMatch = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-        if (imgMatch?.[1]) return imgMatch[1];
-    }
-    return "";
+interface RawFeedItem {
+    guid?: string;
+    link?: string;
+    title?: string;
+    contentSnippet?: string;
+    content?: string;
+    pubDate?: string;
+    categories?: unknown[];
+    enclosure?: { url?: string };
 }
 
-function extractCategories(item: any): string[] {
-    if (Array.isArray(item.categories) && item.categories.length > 0) {
-        return item.categories
-            .map((cat: any) => {
-                if (typeof cat === "string") return cat;
-                if (cat && typeof cat === "object") {
-                    return (cat as any)._ || (cat as any).text || null;
-                }
-                return null;
-            })
-            .filter((cat: any) => cat !== null) as string[];
-    }
+function extractCategories(item: RawFeedItem): string[] {
+    if (!Array.isArray(item.categories)) return [];
 
-    const link = String(item.link || item.guid || "");
-    if (link) {
-        try {
-            const pathname = new URL(link).pathname;
-            const segments = pathname.split("/").filter(Boolean);
-            const categories = segments.slice(0, -1); 
-            if (categories.length > 0) return categories;
-        } catch {}
-    }
-    return [];
+    return item.categories
+        .map((cat) => {
+            if (typeof cat === "string") return cat;
+            if (cat && typeof cat === "object") {
+                const c = cat as Record<string, unknown>;
+                if (typeof c._ === "string") return c._;
+                if (typeof c.text === "string") return c.text;
+            }
+            return null;
+        })
+        .filter((cat): cat is string => cat !== null);
 }
 
 export class FeedService {
     private rssService = new RssService();
-    private savedFeedUrls: string[] = [];
+    private urlRepository = new UrlRepository();
 
     constructor(private readonly repository: FeedRepository) {}
 
-    async addFeedUrl(url: string) {
-        if (!this.savedFeedUrls.includes(url)) {
-            this.savedFeedUrls.push(url);
-        }
+    addFeedUrl(url: string): void {
+        this.urlRepository.addUrl(url);
+        clearFeedCache();
     }
 
     async updateFeeds(): Promise<void> {
-        let successCount = 0;
-        let errorCount = 0;
+        const urls = this.urlRepository.getUrls();
 
-        for (const url of this.savedFeedUrls) {
-            try {
-                const rss = await this.rssService.fetchFeed(url);
+        const results = await Promise.allSettled(
+            urls.map((url) => this.processFeed(url)),
+        );
 
-                for (const item of rss.items) {
-                    const feed: Feed = {
-                        id: 0,
-                        guid: String(item.guid || item.link || ""),
-                        title: String(item.title || ""),
-                        url: String(item.link || ""),
-                        image: String(extractImage(item as any) || ""),
-                        description: String(item.contentSnippet || ""),
-                        content: String(item.content || ""),
-                        date: new Date(item.pubDate || Date.now()),
-                        categories: extractCategories(item as any),
-                    };
-
-                    await this.repository.save(feed);
-                }
-
-                successCount++;
-            } catch (error) {
-                console.error(`Error procesando feed ${url}:`, error);
-                errorCount++;
-            }
-        }
+        const errorCount = results.filter(
+            (r) => r.status === "rejected",
+        ).length;
+        const successCount = results.filter(
+            (r) => r.status === "fulfilled",
+        ).length;
 
         if (errorCount > 0 && successCount === 0) {
             throw new Error("Todos los feeds fallaron");
         }
+        clearFeedCache();
+    }
+
+    private async processFeed(url: string): Promise<void> {
+        const rss = await this.rssService.fetchFeed(url);
+
+        const feeds: Feed[] = rss.items.map((item) => {
+            const raw = item as RawFeedItem;
+            return {
+                id: 0,
+                guid: String(raw.guid ?? raw.link ?? ""),
+                title: String(raw.title ?? ""),
+                url: String(raw.link ?? ""),
+                image: String(raw.enclosure?.url ?? ""),
+                description: String(raw.contentSnippet ?? ""),
+                content: String(raw.content ?? ""),
+                date: new Date(raw.pubDate ?? Date.now()),
+                categories: extractCategories(raw),
+            };
+        });
+
+        await this.repository.saveMany(feeds);
     }
 }
