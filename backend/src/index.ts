@@ -69,7 +69,7 @@ app.post(
 
 app.get(
     "/api/articles/search",
-    noHttpCache(),
+    httpCache(300),
     async (req: Request, res: Response) => {
         try {
             const query = req.query.query as string;
@@ -130,55 +130,56 @@ app.get(
     },
 );
 
-app.get("/api/articles", noHttpCache(), async (req: Request, res: Response) => {
-    try {
-        const page = Number(req.query.page) || 1;
-        const size = Number(req.query.size) || 100;
-        const order = (req.query.order as string) || "desc";
-        const by = (req.query.by as string) || "date";
-        const filters: Record<string, any> = {
-            category: req.query.category,
-        };
-
-        const result = await feedRepository.list(
-            {
-                page,
-                size,
-                order,
-                orderBy: by,
-            },
-            filters,
-        );
-
-        res.json({
-            data: result.items,
-        });
-    } catch (error) {
-        console.error("Error obteniendo noticias:", error);
-        res.status(500).json({
-            error: "Error obteniendo noticias",
-        });
-    }
-});
-
 app.get(
-    "/api/categories",
-    noHttpCache(),
+    "/api/articles",
+    httpCache(),
+    cache(300),
     async (req: Request, res: Response) => {
-        console.log("Obteniendo categorías...");
         try {
-            const categories = await feedRepository.listCategories();
+            const page = Number(req.query.page) || 1;
+            const size = Number(req.query.size) || 100;
+            const order = (req.query.order as string) || "desc";
+            const by = (req.query.by as string) || "date";
+            const filters: Record<string, any> = {
+                category: req.query.category,
+            };
+
+            const result = await feedRepository.list(
+                {
+                    page,
+                    size,
+                    order,
+                    orderBy: by,
+                },
+                filters,
+            );
+
             res.json({
-                data: categories,
+                data: result.items,
             });
         } catch (error) {
-            console.error("Error obteniendo categorías:", error);
+            console.error("Error obteniendo noticias:", error);
             res.status(500).json({
-                error: "Error obteniendo categorías",
+                error: "Error obteniendo noticias",
             });
         }
     },
 );
+
+app.get("/api/categories", cache(300), async (req: Request, res: Response) => {
+    console.log("Obteniendo categorías...");
+    try {
+        const categories = await feedRepository.listCategories();
+        res.json({
+            data: categories,
+        });
+    } catch (error) {
+        console.error("Error obteniendo categorías:", error);
+        res.status(500).json({
+            error: "Error obteniendo categorías",
+        });
+    }
+});
 
 const server = app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
