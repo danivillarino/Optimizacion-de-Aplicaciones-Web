@@ -5,13 +5,18 @@ import cors from "cors";
 import { FeedDao } from "./data/feed-dao";
 import { FeedRepositoryAdapter } from "./data/feed-repository-adapter";
 import { FeedService } from "./services/feed-service";
+import { cache, httpCache, noHttpCache } from "./services/feed-middlewares";
+import compression from "compression";
 
 const app = express();
+
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(compression());
+app.use(express.json({ limit: "3mb" }));
 
 const feedDao = new FeedDao();
 const feedRepository = new FeedRepositoryAdapter(feedDao);
@@ -23,7 +28,7 @@ app.get("/", (_: Request, res: Response) => {
     });
 });
 
-app.post("/api/feeds", async (req: Request, res: Response) => {
+app.post("/api/feeds", noHttpCache(), async (req: Request, res: Response) => {
     try {
         const { url } = req.body;
         if (!url) {
@@ -44,101 +49,141 @@ app.post("/api/feeds", async (req: Request, res: Response) => {
     }
 });
 
-app.post("/api/articles/update", async (req: Request, res: Response) => {
-    try {
-        await feedService.updateFeeds();
-        res.status(200).json({
-            message: "Feeds actualizados correctamente",
-        });
-    } catch (error) {
-        console.error("Error actualizando feeds:", error);
-        res.status(500).json({
-            error: "Error actualizando feeds",
-        });
-    }
-});
-
-app.get("/api/articles/search", async (req: Request, res: Response) => {
-    try {
-        const query = req.query.query as string;
-        const fieldsParam = req.query.fields as string;
-
-        if (!query) {
-            return res.status(400).json({
-                error: "Debe proporcionar texto para buscar",
+app.post(
+    "/api/articles/update",
+    noHttpCache(),
+    async (req: Request, res: Response) => {
+        try {
+            await feedService.updateFeeds();
+            res.status(200).json({
+                message: "Feeds actualizados correctamente",
+            });
+        } catch (error) {
+            console.error("Error actualizando feeds:", error);
+            res.status(500).json({
+                error: "Error actualizando feeds",
             });
         }
+    },
+);
 
-        const fields = fieldsParam
-            ? fieldsParam.split("|").map((f) => f.trim())
-            : ["title", "content", "description"];
+app.get(
+    "/api/articles/search",
+    httpCache(300),
+    async (req: Request, res: Response) => {
+        try {
+            const query = req.query.query as string;
+            const fieldsParam = req.query.fields as string;
 
-        const result = await feedRepository.search(query, fields);
+            if (!query) {
+                return res.status(400).json({
+                    error: "Debe proporcionar texto para buscar",
+                });
+            }
 
+            const fields = fieldsParam
+                ? fieldsParam.split("|").map((f) => f.trim())
+                : ["title", "content", "description"];
+
+            const result = await feedRepository.search(query, fields);
+
+            res.json({
+                data: result,
+            });
+        } catch (error) {
+            console.error("Error buscando noticias:", error);
+            res.status(500).json({
+                error: "Error buscando noticias",
+            });
+        }
+    },
+);
+
+app.get(
+    "/api/articles/:id",
+    cache(300),
+    httpCache(300),
+    async (req: Request, res: Response) => {
+        try {
+            const id = Number(req.params.id);
+            if (isNaN(id)) {
+                return res.status(400).json({
+                    error: "ID inválido",
+                });
+            }
+
+            const article = await feedRepository.getById(id);
+
+            if (!article) {
+                return res.status(404).json({
+                    error: "Artículo no encontrado",
+                });
+            }
+
+            res.json(article);
+        } catch (error) {
+            console.error("Error obteniendo artículo:", error);
+            res.status(500).json({
+                error: "Error obteniendo artículo",
+            });
+        }
+    },
+);
+
+app.get(
+    "/api/articles",
+    httpCache(),
+    cache(300),
+    async (req: Request, res: Response) => {
+        try {
+            const page = Number(req.query.page) || 1;
+            const size = Number(req.query.size) || 100;
+            const order = (req.query.order as string) || "desc";
+            const by = (req.query.by as string) || "date";
+            const filters: Record<string, any> = {
+                category: req.query.category,
+            };
+
+            const result = await feedRepository.list(
+                {
+                    page,
+                    size,
+                    order,
+                    orderBy: by,
+                },
+                filters,
+            );
+
+            res.json({
+                data: result.items,
+            });
+        } catch (error) {
+            console.error("Error obteniendo noticias:", error);
+            res.status(500).json({
+                error: "Error obteniendo noticias",
+            });
+        }
+    },
+);
+
+app.get("/api/categories", cache(300), async (req: Request, res: Response) => {
+    console.log("Obteniendo categorías...");
+    try {
+        const categories = await feedRepository.listCategories();
         res.json({
-            data: result,
+            data: categories,
         });
     } catch (error) {
-        console.error("Error buscando noticias:", error);
+        console.error("Error obteniendo categorías:", error);
         res.status(500).json({
-            error: "Error buscando noticias",
+            error: "Error obteniendo categorías",
         });
     }
 });
 
-app.get("/api/articles/:id", async (req: Request, res: Response) => {
-    try {
-        const id = Number(req.params.id);
-        if (isNaN(id)) {
-            return res.status(400).json({
-                error: "ID inválido",
-            });
-        }
-
-        const article = await feedRepository.getById(id);
-
-        if (!article) {
-            return res.status(404).json({
-                error: "Artículo no encontrado",
-            });
-        }
-
-        res.json(article);
-    } catch (error) {
-        console.error("Error obteniendo artículo:", error);
-        res.status(500).json({
-            error: "Error obteniendo artículo",
-        });
-    }
-});
-
-app.get("/api/articles", async (req: Request, res: Response) => {
-    try {
-        const page = Number(req.query.page) || 1;
-        const size = Number(req.query.size) || 100;
-        const order = (req.query.order as string) || "desc";
-        const by = (req.query.by as string) || "date";
-
-        const result = await feedRepository.list({
-            page,
-            size,
-            order,
-            orderBy: by,
-        });
-
-        res.json({
-            data: result.items,
-        });
-    } catch (error) {
-        console.error("Error obteniendo noticias:", error);
-        res.status(500).json({
-            error: "Error obteniendo noticias",
-        });
-    }
-});
-
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
-
+server.keepAliveTimeout = 65000; // 65 segundos para mantener la conexión viva
+server.headersTimeout = 70000; // 70 segundos para esperar los encabezados
 export default app;

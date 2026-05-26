@@ -1,6 +1,12 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { addFeed, getArticles, searchArticles, updateArticles } from '../services/api'
+import {
+  addFeed,
+  getArticles,
+  searchArticles,
+  updateArticles,
+  getCategories,
+} from '../services/api'
 
 import CategoryFilter from '../components/CategoryFilter.vue'
 import FeedInput from '../components/FeedInput.vue'
@@ -129,49 +135,6 @@ function dedupeById(list) {
   return [...uniqueArticles.values()]
 }
 
-function getArticleSortValue(article, field) {
-  if (field === 'title') {
-    return article.title || ''
-  }
-
-  if (field === 'description') {
-    return article.description || ''
-  }
-
-  const dateValue = Date.parse(article.date || '')
-
-  return Number.isNaN(dateValue) ? 0 : dateValue
-}
-
-function sortArticles(list) {
-  const direction = sortOrder.value === 'asc' ? 1 : -1
-
-  return [...list].sort((firstArticle, secondArticle) => {
-    const firstValue = getArticleSortValue(firstArticle, sortField.value)
-    const secondValue = getArticleSortValue(secondArticle, sortField.value)
-
-    if (typeof firstValue === 'number' && typeof secondValue === 'number') {
-      return (firstValue - secondValue) * direction
-    }
-
-    return (
-      String(firstValue).localeCompare(String(secondValue), 'es', {
-        sensitivity: 'base',
-      }) * direction
-    )
-  })
-}
-
-function filterByCategory(list) {
-  const category = selectedCategory.value.trim()
-
-  if (!category) {
-    return list
-  }
-
-  return list.filter((article) => article.categories.includes(category))
-}
-
 function getActiveArticles() {
   const trimmedSearch = search.value.trim()
 
@@ -179,10 +142,10 @@ function getActiveArticles() {
 }
 
 function getVisibleArticles() {
-  return sortArticles(filterByCategory(getActiveArticles()))
+  return getActiveArticles()
 }
 
-async function loadBaseArticles({ reset = false } = {}) {
+async function loadBaseArticles({ reset = false, cache = undefined } = {}) {
   if (listAbortController) {
     listAbortController.abort()
   }
@@ -199,13 +162,25 @@ async function loadBaseArticles({ reset = false } = {}) {
   }
 
   try {
+    console.log('[Home] loadBaseArticles -> params', {
+      order: sortOrder.value,
+      by: sortField.value,
+      page: requestedPage,
+      size: PAGE_SIZE,
+      category: selectedCategory.value,
+    })
+
     const result = await getArticles({
       order: sortOrder.value,
       by: sortField.value,
       page: requestedPage,
       size: PAGE_SIZE,
+      category: selectedCategory.value,
       signal: controller.signal,
+      cache: cache,
     })
+
+    console.log('[Home] loadBaseArticles -> result', result)
 
     const nextArticles = Array.isArray(result?.data) ? result.data.map(normalizeArticle) : []
 
@@ -245,7 +220,7 @@ async function loadSearchResults() {
   if (!trimmedSearch) {
     searchResults.value = []
     hasMorePages.value = true
-    await loadBaseArticles({ reset: true })
+    await loadBaseArticles({ reset: true, cache: 'no-store' })
     return
   }
 
@@ -301,6 +276,14 @@ async function searchNow() {
 }
 
 async function loadMoreArticles() {
+  console.log('[Home] loadMoreArticles called', {
+    search: search.value,
+    hasMorePages: hasMorePages.value,
+    isLoading: isLoading.value,
+    isLoadingMore: isLoadingMore.value,
+    currentPage: currentPage.value,
+  })
+
   if (search.value.trim() || !hasMorePages.value || isLoading.value || isLoadingMore.value) {
     return
   }
@@ -318,7 +301,7 @@ async function refreshFeed() {
     if (search.value.trim()) {
       await loadSearchResults()
     } else {
-      await loadBaseArticles({ reset: true })
+      await loadBaseArticles({ reset: true, cache: 'no-store' })
     }
 
     setStatus('Noticias actualizadas correctamente.', 'success')
@@ -337,6 +320,7 @@ async function addFeedHandler(url) {
   try {
     await addFeed(url)
     setStatus('Feed agregado correctamente. Ahora puedes actualizar las noticias.', 'success')
+    await loadCategories()
   } catch (error) {
     console.error('Error agregando feed:', error)
     setStatus('No fue posible agregar el feed. Revisa la URL e intenta de nuevo.', 'danger')
@@ -345,18 +329,24 @@ async function addFeedHandler(url) {
   }
 }
 
-const categories = computed(() => {
-  const uniqueCategories = new Set()
+const categoriesList = ref([])
 
-  dedupeById([...baseArticles.value, ...searchResults.value]).forEach((article) => {
-    article.categories.forEach((category) => uniqueCategories.add(category))
-  })
+async function loadCategories() {
+  try {
+    const result = await getCategories()
+    const items = Array.isArray(result?.data) ? result.data : []
+    categoriesList.value = normalizeCategories(items).sort((a, b) =>
+      a.localeCompare(b, 'es', { sensitivity: 'base' }),
+    )
+  } catch (error) {
+    console.error('Error cargando categorias:', error)
+    categoriesList.value = []
+  }
+}
 
-  return [...uniqueCategories].sort((first, second) => {
-    return first.localeCompare(second, 'es', {
-      sensitivity: 'base',
-    })
-  })
+watch(selectedCategory, async () => {
+  currentPage.value = 1
+  await loadBaseArticles({ reset: true })
 })
 
 const hasActiveFilters = computed(() => {
@@ -397,8 +387,22 @@ onBeforeUnmount(() => {
   }
 })
 
-onMounted(() => {
+onMounted(async () => {
+  console.log('HomeView montada, cargando categorias y articulos iniciales...')
+  loadCategories()
   loadBaseArticles({ reset: true })
+})
+
+watch(sortField, async () => {
+  console.log('[Home] sortField changed', sortField.value)
+  currentPage.value = 1
+  await loadBaseArticles({ reset: true })
+})
+
+watch(sortOrder, async () => {
+  console.log('[Home] sortOrder changed', sortOrder.value)
+  currentPage.value = 1
+  await loadBaseArticles({ reset: true })
 })
 </script>
 
@@ -416,7 +420,6 @@ onMounted(() => {
 
       <div class="controls-stack mb-4">
         <FeedInput :is-submitting="isAddingFeed" @add-feed="addFeedHandler" />
-
         <SearchBar
           v-model="search"
           :is-refreshing="isRefreshing"
@@ -429,7 +432,7 @@ onMounted(() => {
       <div class="toolbar-panel mb-4">
         <div class="row g-3">
           <div class="col-12 col-lg-4">
-            <CategoryFilter v-model="selectedCategory" :categories="categories" />
+            <CategoryFilter v-model="selectedCategory" :categories="categoriesList" />
           </div>
 
           <div class="col-12 col-lg-8">

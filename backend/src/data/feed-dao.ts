@@ -61,23 +61,131 @@ export class FeedDao {
         }
     }
 
-    async list(request: PageRequest): Promise<PageResponse<Feed>> {
+    async saveMany(feeds: Feed[]): Promise<void> {
+        if (feeds.length === 0) return;
+
+        const connection = await pool.getConnection();
+        try {
+            await connection.beginTransaction();
+
+            // Un solo INSERT para todos los feeds
+            const feedValues = feeds.map((f) => [
+                f.guid,
+                f.title,
+                f.url,
+                f.description,
+                f.content,
+                f.date,
+                f.image,
+            ]);
+
+            const [results] = await connection.query(
+                "INSERT IGNORE INTO feed (guid, title, url, description, content, date, image) VALUES ?",
+                [feedValues],
+            );
+
+            // Reconstruir qué IDs se insertaron realmente
+            const { insertId, affectedRows } = results as any;
+            if (affectedRows === 0) {
+                await connection.commit();
+                return;
+            }
+
+            // IDs insertados son consecutivos desde insertId
+            const insertedIds = Array.from(
+                { length: affectedRows },
+                (_, i) => insertId + i,
+            );
+
+            // Cruzar con los feeds que tenían categorías
+            const feedsWithCategories = feeds.filter(
+                (f) => f.categories.length > 0,
+            );
+            const categoryValues: [number, string][] = [];
+
+            feedsWithCategories.forEach((feed, i) => {
+                const id = insertedIds[i];
+                feed.categories.forEach((cat) => {
+                    categoryValues.push([id, cat]);
+                });
+            });
+
+            if (categoryValues.length > 0) {
+                await connection.query(
+                    "INSERT IGNORE INTO feed_categories (feed_id, category) VALUES ?",
+                    [categoryValues],
+                );
+            }
+
+            await connection.commit();
+        } catch (error) {
+            await connection.rollback();
+            throw error;
+        } finally {
+            connection.release();
+        }
+    }
+
+    async list(
+        request: PageRequest,
+        filters: Record<string, any>,
+    ): Promise<PageResponse<Feed>> {
         const offset = (request.page - 1) * request.size;
         const orderByQuery = this.buildSpecificOrderByQuery(
             request.orderBy,
             request.order,
         );
-        const [feedRows] = await pool.query(
-            `SELECT * FROM feed ${orderByQuery} LIMIT ? OFFSET ?`,
-            [request.size || DEFAULT_PAGE_SIZE, offset],
+
+        // Separar filtros de feed y de categoría
+        const { category, ...feedFilters } = filters;
+
+        const whereClauses: string[] = Object.keys(feedFilters).map(
+            (key) => `f.${key} = ?`,
         );
-        const [countRows] = await pool.query(
-            "SELECT COUNT(*) as count FROM feed",
-        );
+        const whereValues: any[] = Object.values(feedFilters);
+
+        // Si hay filtro de categoría, añadir JOIN y condición
+        const joinClause = category
+            ? "JOIN feed_categories fc ON f.id = fc.feed_id"
+            : "";
+
+        if (category) {
+            whereClauses.push("fc.category = ?");
+            whereValues.push(category);
+        }
+
+        const whereClause =
+            whereClauses.length > 0
+                ? `WHERE ${whereClauses.join(" AND ")}`
+                : "";
+
+        const finalQuery = `
+        SELECT DISTINCT f.* FROM feed f
+        ${joinClause}
+        ${whereClause}
+        ${orderByQuery}
+        LIMIT ? OFFSET ?
+    `;
+
+        const countQuery = `
+        SELECT COUNT(DISTINCT f.id) as count FROM feed f
+        ${joinClause}
+        ${whereClause}
+    `;
+
+        const [feedRows] = await pool.query(finalQuery, [
+            ...whereValues,
+            request.size || DEFAULT_PAGE_SIZE,
+            offset,
+        ]);
+
+        const [countRows] = await pool.query(countQuery, whereValues);
+
         const totalItems = (countRows as any[])[0].count;
         const totalPages = Math.ceil(
             totalItems / (request.size || DEFAULT_PAGE_SIZE),
         );
+
         const feedIds = (feedRows as any[]).map((row) => row.id);
         const categoryRows: any[] =
             feedIds.length > 0
@@ -88,6 +196,7 @@ export class FeedDao {
                       )
                   )[0] as any[])
                 : [];
+
         const feeds: Feed[] = (feedRows as any[]).map((row) => ({
             id: row.id,
             guid: row.guid,
@@ -101,6 +210,7 @@ export class FeedDao {
                 .filter((cat) => cat.feed_id === row.id)
                 .map((cat) => cat.category),
         }));
+
         return {
             items: feeds,
             totalItems,
@@ -122,7 +232,7 @@ export class FeedDao {
             .join(" OR ");
         const [feedRows] = await pool.query(
             `SELECT * FROM feed WHERE ${whereClauses}`,
-            allowedFields.map(() => `%${query}%`),
+            allowedFields.map(() => `%${query.toLowerCase()}%`),
         );
         console.log("FeedDao.search - feedRows:", feedRows);
         const categoryRows: any[] =
@@ -147,6 +257,13 @@ export class FeedDao {
                 .filter((cat) => cat.feed_id === row.id)
                 .map((cat) => cat.category),
         }));
+    }
+
+    async listCategories(): Promise<string[]> {
+        const [rows] = await pool.query(
+            "SELECT DISTINCT category FROM feed_categories",
+        );
+        return (rows as any[]).map((row) => row.category);
     }
 
     private fieldIsAllowed(field: string): boolean {

@@ -27,7 +27,7 @@ function getErrorMessage(payload, fallbackMessage) {
   return payload?.message || payload?.error || fallbackMessage
 }
 
-async function request(path, { method = 'GET', body, signal } = {}) {
+async function request(path, { method = 'GET', body, signal } = {}, cacheMode = undefined) {
   const hasBody = body !== undefined
   const headers = {
     ...DEFAULT_HEADERS,
@@ -41,6 +41,10 @@ async function request(path, { method = 'GET', body, signal } = {}) {
     method,
     headers,
     signal,
+  }
+
+  if (cacheMode) {
+    requestOptions.cache = cacheMode !== undefined ? cacheMode : 'no-store'
   }
 
   if (hasBody) {
@@ -70,14 +74,6 @@ function normalizeCollectionResponse(payload) {
   return { data: [] }
 }
 
-function normalizeEntityResponse(payload) {
-  if (payload?.data && !Array.isArray(payload.data)) {
-    return payload.data
-  }
-
-  return payload
-}
-
 /**
  * 1. Agregar Feed RSS
  */
@@ -100,15 +96,6 @@ export async function updateArticles() {
 }
 
 /**
- * 3. Obtener artículo por ID
- */
-export async function getArticleById(id) {
-  const payload = await request(`/articles/${id}`)
-
-  return normalizeEntityResponse(payload)
-}
-
-/**
  * 4. Listar artículos
  */
 export async function getArticles({
@@ -116,10 +103,9 @@ export async function getArticles({
   by = 'date',
   page = 1,
   size = 20,
-  query = '',
-  fields = '',
   category = '',
   signal,
+  cache = undefined,
 } = {}) {
   const params = new URLSearchParams()
 
@@ -128,21 +114,17 @@ export async function getArticles({
   params.set('page', String(page))
   params.set('size', String(size))
 
-  if (typeof query === 'string' && query.trim()) {
-    params.set('query', query.trim())
-  }
-
-  if (typeof fields === 'string' && fields.trim()) {
-    params.set('fields', fields.trim())
-  }
-
   if (typeof category === 'string' && category.trim()) {
     params.set('category', category.trim())
   }
 
-  const payload = await request(`/articles?${params}`, {
-    signal,
-  })
+  const payload = await request(
+    `/articles?${params}`,
+    {
+      signal,
+    },
+    cache,
+  )
 
   return normalizeCollectionResponse(payload)
 }
@@ -158,6 +140,17 @@ export async function searchArticles(query, fields = 'title|content|description'
 
   const payload = await request(`/articles/search?${params}`, {
     signal: options.signal,
+  })
+
+  return normalizeCollectionResponse(payload)
+}
+
+/**
+ * 6. Listar categorías
+ */
+export async function getCategories(signal) {
+  const payload = await request('/categories', {
+    signal,
   })
 
   return normalizeCollectionResponse(payload)
