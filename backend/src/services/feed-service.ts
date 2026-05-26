@@ -12,7 +12,59 @@ interface RawFeedItem {
     content?: string;
     pubDate?: string;
     categories?: unknown[];
+    image?: { url?: string };
     enclosure?: { url?: string };
+    "media:content"?: unknown;
+    "media:thumbnail"?: unknown;
+    mediaContent?: unknown;
+    mediaThumbnail?: unknown;
+}
+
+function extractMediaUrl(mediaNode: unknown): string | null {
+    if (!mediaNode) return null;
+
+    const extractUrlFromNode = (node: unknown): string | null => {
+        if (!node || typeof node !== "object") return null;
+
+        const obj = node as Record<string, unknown>;
+
+        if (typeof obj.url === "string" && obj.url.length > 0) return obj.url;
+
+        const attrs = obj.$;
+        if (attrs && typeof attrs === "object") {
+            const a = attrs as Record<string, unknown>;
+            if (typeof a.url === "string" && a.url.length > 0) return a.url;
+        }
+
+        return null;
+    };
+
+    if (Array.isArray(mediaNode)) {
+        for (const node of mediaNode) {
+            const url = extractUrlFromNode(node);
+            if (url) return url;
+        }
+        return null;
+    }
+
+    return extractUrlFromNode(mediaNode);
+}
+
+function extractImageUrl(item: RawFeedItem): string {
+    const direct = item.image?.url ?? item.enclosure?.url;
+    if (typeof direct === "string" && direct.length > 0) return direct;
+
+    const mediaContentUrl =
+        extractMediaUrl(item.mediaContent) ??
+        extractMediaUrl(item["media:content"]);
+    if (mediaContentUrl) return mediaContentUrl;
+
+    const mediaThumbnailUrl =
+        extractMediaUrl(item.mediaThumbnail) ??
+        extractMediaUrl(item["media:thumbnail"]);
+    if (mediaThumbnailUrl) return mediaThumbnailUrl;
+
+    return "";
 }
 
 function extractCategories(item: RawFeedItem): string[] {
@@ -72,7 +124,7 @@ export class FeedService {
                 guid: String(raw.guid ?? raw.link ?? ""),
                 title: String(raw.title ?? ""),
                 url: String(raw.link ?? ""),
-                image: String(raw.enclosure?.url ?? ""),
+                image: extractImageUrl(raw),
                 description: String(raw.contentSnippet ?? ""),
                 content: String(raw.content ?? ""),
                 date: new Date(raw.pubDate ?? Date.now()),

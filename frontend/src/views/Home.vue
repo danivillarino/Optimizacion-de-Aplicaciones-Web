@@ -145,7 +145,7 @@ function getVisibleArticles() {
   return getActiveArticles()
 }
 
-async function loadBaseArticles({ reset = false } = {}) {
+async function loadBaseArticles({ reset = false, cache = undefined } = {}) {
   if (listAbortController) {
     listAbortController.abort()
   }
@@ -177,6 +177,7 @@ async function loadBaseArticles({ reset = false } = {}) {
       size: PAGE_SIZE,
       category: selectedCategory.value,
       signal: controller.signal,
+      cache: cache,
     })
 
     console.log('[Home] loadBaseArticles -> result', result)
@@ -219,7 +220,7 @@ async function loadSearchResults() {
   if (!trimmedSearch) {
     searchResults.value = []
     hasMorePages.value = true
-    await loadBaseArticles({ reset: true })
+    await loadBaseArticles({ reset: true, cache: 'no-store' })
     return
   }
 
@@ -300,7 +301,7 @@ async function refreshFeed() {
     if (search.value.trim()) {
       await loadSearchResults()
     } else {
-      await loadBaseArticles({ reset: true })
+      await loadBaseArticles({ reset: true, cache: 'no-store' })
     }
 
     setStatus('Noticias actualizadas correctamente.', 'success')

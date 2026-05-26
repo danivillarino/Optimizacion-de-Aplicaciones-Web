@@ -27,7 +27,7 @@ function getErrorMessage(payload, fallbackMessage) {
   return payload?.message || payload?.error || fallbackMessage
 }
 
-async function request(path, { method = 'GET', body, signal } = {}) {
+async function request(path, { method = 'GET', body, signal } = {}, cacheMode = undefined) {
   const hasBody = body !== undefined
   const headers = {
     ...DEFAULT_HEADERS,
@@ -41,6 +41,10 @@ async function request(path, { method = 'GET', body, signal } = {}) {
     method,
     headers,
     signal,
+  }
+
+  if (cacheMode) {
+    requestOptions.cache = cacheMode !== undefined ? cacheMode : 'no-store'
   }
 
   if (hasBody) {
@@ -101,6 +105,7 @@ export async function getArticles({
   size = 20,
   category = '',
   signal,
+  cache = undefined,
 } = {}) {
   const params = new URLSearchParams()
 
@@ -113,9 +118,13 @@ export async function getArticles({
     params.set('category', category.trim())
   }
 
-  const payload = await request(`/articles?${params}`, {
-    signal,
-  })
+  const payload = await request(
+    `/articles?${params}`,
+    {
+      signal,
+    },
+    cache,
+  )
 
   return normalizeCollectionResponse(payload)
 }
